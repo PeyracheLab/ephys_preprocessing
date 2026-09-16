@@ -60,8 +60,6 @@ With just an animal ID, `--data-dir`, and `--probe`, the pipeline runs these ste
 
 The XML's `<anatomicalDescription>` needs **exactly one channel group per physical shank**, in the same order as the shanks in your probe file — and if shanks have *different* channel counts (e.g. one shank carrying extra deep electrodes, like `Buzsaki64sp`), each XML group's size must match that specific shank's count exactly.
 
-Geometry is matched by **position within each group, never by channel number** — real headstage wiring is almost never sequential (e.g. a shank's channels might be listed as `16, 30, 17, 31, ...`, not `0, 1, 2, 3, ...`). The 1st channel listed in a shank's XML group gets the probe file's 1st geometric position for that shank, the 2nd gets the 2nd, and so on, whatever the real channel numbers are. If a group spans more than one shank, or groups are out of order, or a group's size doesn't match its shank, geometry silently gets assigned to the wrong channels — no crash, just wrong spike sorting.
-
 ### Flags worth highlighting
 
 - **`--skip-sorting`** — pre-process only; do not run KiloSort 4 at all. Use this if you just want the merged `.dat`/`.xml`/`.eeg` ready without sorting yet.
