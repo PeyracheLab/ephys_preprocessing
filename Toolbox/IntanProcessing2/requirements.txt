@@ -1,0 +1,13 @@
+# Core scientific stack
+numpy>=1.24
+scipy>=1.10
+matplotlib>=3.7
+pandas>=2.0
+tqdm>=4.65
+
+# KiloSort 4  (Python spike sorter)
+# Install separately with CUDA support – see setup_env.bat
+# kilosort>=4.0
+
+# PyTorch is a KiloSort 4 dependency – see setup_env.bat for CUDA-aware install
+# torch>=2.0
