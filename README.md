@@ -60,6 +60,8 @@ With just an animal ID, `--data-dir`, and `--probe`, the pipeline runs these ste
 
 The XML's `<anatomicalDescription>` needs **exactly one channel group per physical shank**, in the same order as the shanks in your probe file — and if shanks have *different* channel counts (e.g. one shank carrying extra deep electrodes, like `Buzsaki64sp`), each XML group's size must match that specific shank's count exactly.
 
+Channel order within each group also matters: the convention here is **descending anatomical order — from the top of the probe down to the tip** — for both the XML's channel list and the probe file's `xc`/`yc` arrays. The first channel listed in a shank's group is its topmost electrode, the last is its tip. Both files must agree on this direction; nothing in the code can detect a reversed order on its own, since it doesn't change any channel count.
+
 ### Flags worth highlighting
 
 - **`--skip-sorting`** — pre-process only; do not run KiloSort 4 at all. Use this if you just want the merged `.dat`/`.xml`/`.eeg` ready without sorting yet.
