@@ -53,6 +53,16 @@ ephyviewer
 spikeinterface-gui
 kilosort>4.0.30
 
+# h5py pinned: spikeinterface[full] pulls in h5py with no version constraint,
+# which currently resolves to a version (3.16.x) that only ships wheels for
+# very new Linux (glibc >= 2.28). On any older Linux (glibc < 2.28, e.g.
+# Ubuntu 18.04/Mint 19.x machines) there's no matching wheel, so pip/uv falls
+# back to building it from source — which then fails separately because that
+# build needs a newer `packaging` than its isolated build env provides.
+# Pinning to a version that still ships broadly-compatible manylinux2014
+# wheels (glibc >= 2.17) avoids building from source at all, on any machine.
+h5py==3.14.0
+
 # nwb-builder (Toolbox/nwb-builder) — editable install; pulls in its own
 # deps too (numpy, pandas, scipy, pynwb, pynapple) via its pyproject.toml.
 -e ./Toolbox/nwb-builder
