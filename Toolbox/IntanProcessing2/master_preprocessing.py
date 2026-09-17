@@ -186,6 +186,31 @@ def _run_spike_sorter(
     print(f"  Command: {' '.join(cmd)}")
     subprocess.run(cmd, check=True)
 
+
+def _backup_original_clu_files(out_dir: Path, merge_name: str, dry_run: bool) -> None:
+    """
+    Copy the freshly-sorted .clu.N files into out_dir/OriginalClus/.
+
+    Klusters occasionally crashes and corrupts a .clu file while a student is
+    manually curating clusters. Keeping an untouched copy of the original,
+    just-sorted .clu files means they can restore from here and re-curate
+    without having to re-run spike sorting from scratch.
+    """
+    clu_files = sorted(out_dir.glob(f"{merge_name}.clu.*"))
+    if not clu_files:
+        return
+
+    backup_dir = out_dir / "OriginalClus"
+    if dry_run:
+        print(f"    [dry] Would back up {len(clu_files)} .clu file(s) → {backup_dir}")
+        return
+
+    backup_dir.mkdir(exist_ok=True)
+    for f in clu_files:
+        shutil.copy2(f, backup_dir / f.name)
+    print(f"  Backed up {len(clu_files)} original .clu file(s) → {backup_dir}")
+
+
 def parse_args():
     p = argparse.ArgumentParser(
         description="Intan pre-processing pipeline (Python port of MasterPreProcessing_Intan25)")
@@ -658,6 +683,7 @@ def main():
             site_spacing  = args.site_spacing,
             dry_run       = args.dry_run,
         )
+        _backup_original_clu_files(out_dir, merge_name, dry_run=args.dry_run)
 
     # ── Steps 7-8: LFP downsampling (default on) + sleep scoring (opt-in) ────
     print(f"\n[7/9] LFP downsampling: "
