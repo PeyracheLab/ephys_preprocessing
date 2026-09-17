@@ -213,7 +213,10 @@ def _backup_original_clu_files(out_dir: Path, merge_name: str, dry_run: bool) ->
 
     backup_dir.mkdir(exist_ok=True)
     for f in clu_files:
-        shutil.copy2(f, backup_dir / f.name)
+        # copyfile, not copy/copy2: both of those chmod the destination to
+        # match source permissions, which network mounts (e.g. GVFS/FUSE SMB
+        # shares) commonly don't support. copyfile is a pure byte copy.
+        shutil.copyfile(f, backup_dir / f.name)
     print(f"  Backed up {len(clu_files)} original .clu file(s) → {backup_dir}")
 
 
@@ -437,6 +440,7 @@ def _run_per_session(args, rec_list, durations, data_dir, sample_rate) -> None:
             site_spacing  = args.site_spacing,
             dry_run       = args.dry_run,
         )
+        _backup_original_clu_files(out_dir, rec, dry_run=args.dry_run)
 
 
 def _copy_back_and_finish(args, scratch_dir, original_data_dir, output_names, data_dir) -> None:
