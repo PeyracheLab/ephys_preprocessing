@@ -62,6 +62,14 @@ The XML's `<anatomicalDescription>` needs **exactly one channel group per physic
 
 Channel order within each group also matters: the convention here is **descending anatomical order — from the top of the probe down to the tip** — for both the XML's channel list and the probe file's `xc`/`yc` arrays. The first channel listed in a shank's group is its topmost electrode, the last is its tip. Both files must agree on this direction; nothing in the code can detect a reversed order on its own, since it doesn't change any channel count.
 
+**Never discard a channel in NeuroScope if you want it excluded from spike sorting — this will break KiloSort's inferred geometry.** Discarding removes the channel from *both* `<anatomicalDescription>` and `<spikeDetection>` when you save, which shrinks that shank's channel count below what the probe file expects. Depending on the mismatch, that either hard-fails the pipeline outright, or — worse — silently shifts every other channel on that shank onto the wrong geometry position. This is the trash-can icon, `Channels → Discard Channels`:
+
+![NeuroScope: a discarded channel group, shown with the trash-can icon](images/neuroscope-discard.png)
+
+Hiding and Skipping are both fine to use as much as you like — they're purely visual and never touch the XML's channel groups or counts. But if you actually want a channel excluded from spike sorting, select it and use `Channels → Remove Channels from Group` instead. This moves it into the **"?" (Undefined Spike Group)** — it stays in `<anatomicalDescription>` (so the rest of the shank's geometry stays correct) and is simply left out of `<spikeDetection>`, which is exactly what excludes it from KiloSort:
+
+![NeuroScope: a channel removed from its spike group, shown moved to the "?" (Undefined Spike Group)](images/neuroscope-remove-from-group.png)
+
 ### Flags worth highlighting
 
 - **`--skip-sorting`** — pre-process only; do not run KiloSort 4 at all. Use this if you just want the merged `.dat`/`.xml`/`.eeg` ready without sorting yet.
