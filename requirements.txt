@@ -52,6 +52,7 @@ pyqtgraph
 ephyviewer
 spikeinterface-gui
 kilosort>4.0.30
+lxml   # needed by spikeinterface.extractors.read_neuroscope_sorting
 
 # h5py pinned: spikeinterface[full] pulls in h5py with no version constraint,
 # which currently resolves to a version (3.16.x) that only ships wheels for

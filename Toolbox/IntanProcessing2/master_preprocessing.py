@@ -184,7 +184,13 @@ def _run_spike_sorter(
         cmd.append("--dry-run")
 
     print(f"  Command: {' '.join(cmd)}")
-    subprocess.run(cmd, check=True)
+    # KiloSort 4 saves a diagnostic drift plot via matplotlib. Left to its default
+    # backend, matplotlib tries to load a Qt GUI backend (via PySide6/shiboken6),
+    # which segfaults when there's no usable display attached (e.g. running in
+    # the background) — force the non-interactive Agg backend, which just
+    # rasterizes to disk and never touches Qt at all.
+    env = {**os.environ, "MPLBACKEND": "Agg"}
+    subprocess.run(cmd, check=True, env=env)
 
 
 def _backup_original_clu_files(out_dir: Path, merge_name: str, dry_run: bool) -> None:

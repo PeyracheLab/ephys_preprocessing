@@ -97,6 +97,27 @@ nwb-build path/to/AnimalID-YYMMDD
 
 This writes `AnimalID-YYMMDD.nwb` (no `_dirtyClusters` suffix — use this once clusters are actually clean) into that same folder. Pass `--force` to overwrite an existing one. Run `nwb-build --help` for optional metadata flags (subject info, session description, brain region per shank, etc.).
 
+#### `nwb-build` flags
+
+- `-o`/`--output PATH` — write the `.nwb` somewhere other than `<session_dir>/<basename>.nwb`.
+- `--force` — overwrite the output file if it already exists.
+- `--dry-run` — parse everything and print a summary without writing the `.nwb`.
+- `--no-position` — skip Position/CompassDirection entirely. Spikes and epochs are still written. **Use this whenever TTL sync failed for a session** — check the console output for a TTL-vs-tracking-frame count mismatch warning. Writing truncated/misaligned position data would look valid but not be, which is worse than having no position data at all: with `--no-position`, the missing tracking is obvious to anyone opening the file; without it, a bad sync can silently look like real behavior.
+
+Tracking / TTL sync:
+- `--tracking-frequency HZ` — Optitrack capture frame rate (default: read from the csv header).
+- `--ttl-threshold FLOAT` — normalized peak height threshold for TTL pulse detection (default: `0.3`).
+- `--mismatch-warn-frac FLOAT` — warn if `|TTL count - frame count|` exceeds this fraction of the larger count (default: `0.01`).
+
+Epochs:
+- `--epoch-labels LABEL,LABEL,...` — comma-separated labels for each epoch in `Epoch_TS.csv` order (default: `epoch0`, `epoch1`, ...).
+
+Subject metadata: `--subject-id` (default: parsed from the folder name), `--species` (default `Mus musculus`), `--sex` (default `U`), `--genotype`, `--subject-description`, `--age` (ISO 8601 duration, e.g. `P90D`).
+
+Session metadata: `--session-description`, `--experimenter`, `--lab` (default `Peyrache Lab`), `--institution` (default `McGill University`), `--session-start-time` (ISO 8601 datetime override).
+
+Ephys metadata: `--location` (brain region — one value for all shanks, or a comma-separated list with one entry per shank), `--device-name` (default `silicon_probe`), `--device-description`, `--device-manufacturer`.
+
 ### All other flags
 
 - `--output-format {neurosuite,phy}` — spike sorting export format (default: `neurosuite`)
