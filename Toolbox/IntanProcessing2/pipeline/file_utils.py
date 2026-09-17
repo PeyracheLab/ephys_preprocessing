@@ -116,7 +116,10 @@ def _copy_if_exists(src: Path, dst: Path) -> None:
     if not src.exists():
         return
     dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
+    # copyfile, not copy2: copy2 also chmod's the destination to match source
+    # permissions, which network mounts (e.g. GVFS/FUSE SMB shares) commonly
+    # don't support.
+    shutil.copyfile(src, dst)
 
 
 def _move(src: Path, dst: Path, dry_run: bool) -> bool:

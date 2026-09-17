@@ -193,6 +193,28 @@ def _run_spike_sorter(
     subprocess.run(cmd, check=True, env=env)
 
 
+def _copytree_no_metadata(src: Path, dst: Path) -> None:
+    """
+    shutil.copytree, tolerant of destinations that don't support chmod (e.g.
+    GVFS/FUSE network mounts).
+
+    copy_function=copyfile means individual files are copied without any
+    metadata/permission operations, so the only remaining failure mode is
+    copytree's own unconditional trailing copystat() on the top-level
+    src/dst directory pair — by the time that runs, every file's contents
+    have already copied successfully, so its failure is safe to ignore.
+    """
+    try:
+        shutil.copytree(str(src), str(dst), copy_function=shutil.copyfile)
+    except shutil.Error as err:
+        real_errors = [
+            (s, d, msg) for (s, d, msg) in err.args[0]
+            if "Operation not supported" not in msg
+        ]
+        if real_errors:
+            raise
+
+
 def _backup_original_clu_files(out_dir: Path, merge_name: str, dry_run: bool) -> None:
     """
     Copy the freshly-sorted .clu.N files into out_dir/OriginalClus/.
@@ -372,7 +394,7 @@ def _resolve_session_xml(
 
     for xml_candidate in [data_dir / "amplifier.xml", data_dir.parent / "amplifier.xml"]:
         if xml_candidate.exists():
-            shutil.copy2(xml_candidate, dst_xml)
+            shutil.copyfile(xml_candidate, dst_xml)
             print(f"      XML copied from {xml_candidate}: {dst_xml.name}")
             return dst_xml
 
@@ -460,7 +482,7 @@ def _copy_back_and_finish(args, scratch_dir, original_data_dir, output_names, da
             if result_src.exists():
                 if result_dst.exists():
                     shutil.rmtree(result_dst)
-                shutil.copytree(result_src, result_dst)
+                _copytree_no_metadata(result_src, result_dst)
                 print(f"      Done.")
             else:
                 print(f"      WARNING: expected output folder not found in scratch: {result_src}")
@@ -550,13 +572,13 @@ def main():
                         print(f"      Already present, skipping copy: {item.name}")
                     else:
                         print(f"      Copying {item.name} ...")
-                        shutil.copytree(item, dst)
+                        _copytree_no_metadata(item, dst)
                     n_copied += 1
             # Copy optional support files that the pipeline may need
             for fname in ("amplifier.xml", "probe.json"):
                 src = data_dir / fname
                 if src.exists():
-                    shutil.copy2(src, scratch_dir / fname)
+                    shutil.copyfile(src, scratch_dir / fname)
             if n_copied == 0:
                 sys.exit("ERROR: No session folders found to copy – nothing to do.")
             print(f"      {n_copied} session folder(s) copied.")
@@ -633,7 +655,7 @@ def main():
 
         # 1. XML in session folder (moved to flat file by rename_copy)
         if src_xml.exists():
-            shutil.copy2(src_xml, dst_xml)
+            shutil.copyfile(src_xml, dst_xml)
             print(f"      XML copied from session folder: {dst_xml.name}")
 
         # 2. amplifier.xml placed manually in data_dir or its parent
@@ -643,7 +665,7 @@ def main():
                 data_dir.parent / "amplifier.xml",
             ]:
                 if xml_candidate.exists():
-                    shutil.copy2(xml_candidate, dst_xml)
+                    shutil.copyfile(xml_candidate, dst_xml)
                     print(f"      XML copied from {xml_candidate}: {dst_xml.name}")
                     break
 
@@ -735,7 +757,7 @@ def main():
         if result_src.exists():
             if result_dst.exists():
                 shutil.rmtree(result_dst)
-            shutil.copytree(result_src, result_dst)
+            _copytree_no_metadata(result_src, result_dst)
             print(f"      Done.")
         else:
             print(f"      WARNING: expected output folder not found in scratch: {result_src}")

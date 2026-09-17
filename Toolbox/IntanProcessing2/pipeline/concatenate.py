@@ -88,7 +88,10 @@ def _cat_python(src_files: List[Path], dst_file: Path) -> None:
     chunk_bytes = cfg.CONCAT_CHUNK_SAMPLES * 2   # int16 = 2 bytes, channels merged later
 
     if len(src_files) == 1:
-        shutil.copy2(src_files[0], dst_file)
+        # copyfile, not copy2: copy2 also chmod's the destination to match
+        # source permissions, which network mounts (e.g. GVFS/FUSE SMB
+        # shares) commonly don't support.
+        shutil.copyfile(src_files[0], dst_file)
         return
 
     with open(dst_file, "wb") as fout:
