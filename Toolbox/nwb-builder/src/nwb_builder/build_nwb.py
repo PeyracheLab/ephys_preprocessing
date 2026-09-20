@@ -171,8 +171,15 @@ def build(cfg: BuildConfig) -> str:
     basename = _basename(session_dir)
 
     output_path = cfg.output_path or os.path.join(session_dir, f"{basename}.nwb")
-    if os.path.exists(output_path) and not cfg.force and not cfg.dry_run:
-        raise FileExistsError(f"{output_path} already exists. Pass --force to overwrite.")
+    if os.path.exists(output_path):
+        if not cfg.force and not cfg.dry_run:
+            raise FileExistsError(f"{output_path} already exists. Pass --force to overwrite.")
+        if cfg.force and not cfg.dry_run:
+            # Remove first rather than let HDF5 open the existing file in
+            # truncate mode: on some network mounts (e.g. GVFS/FUSE SMB
+            # shares) opening an existing file for truncation fails, while
+            # creating a fresh one works fine.
+            os.remove(output_path)
 
     print(f"Session dir: {session_dir}")
     print(f"Basename:    {basename}")

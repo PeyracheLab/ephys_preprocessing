@@ -768,18 +768,16 @@ def main():
 
     print(f"\n✓ Pipeline complete.  Output in: {out_dir.resolve()}\n")
 
-    # ── Warn if root folder name doesn't match and offer to rename ────────────
+    # ── Warn if root folder name doesn't match merge name ─────────────────────
     # (Only relevant when processing in-place; skip when a scratch dir was used.)
+    # No interactive prompt here — this pipeline commonly runs unattended
+    # (batch scripts, background jobs), where input() would just hang/crash
+    # on EOF. Renaming is cosmetic only, so it's left for the user to do
+    # manually if they want it.
     if not scratch_dir and not root_matches and not args.dry_run:
-        print(f"  WARNING: the data folder is named '{original_data_dir.name}' "
-              f"but the merge basename is '{merge_name}'.")
-        print(f"  Consider renaming it to '{merge_name}' for consistency.")
-        answer = input(f"  Rename '{original_data_dir.name}' → '{merge_name}' now? [y/N] ").strip().lower()
-        if answer == "y":
-            new_path = original_data_dir.parent / merge_name
-            os.chdir(original_data_dir.parent)   # must leave the folder before renaming it
-            original_data_dir.rename(new_path)
-            print(f"  Renamed: {original_data_dir}  →  {new_path}")
+        print(f"  NOTE: the data folder is named '{original_data_dir.name}' "
+              f"but the merge basename is '{merge_name}'. Purely cosmetic — "
+              f"rename it yourself if you want them to match.")
 
 
 if __name__ == "__main__":
