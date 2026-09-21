@@ -43,6 +43,12 @@ SPIKE_N_FEATURES  = 3     # number of PCs per channel written to .fet files
 # Klusters with an excessive number of feature columns.
 LARGE_SHANK_THRESHOLD = 16
 
+# Waveforms are extracted and written in chunks of this many spikes at a
+# time, rather than all at once, so memory use stays bounded regardless of
+# how many spikes or channels a shank has (a dense, high-channel-count shank
+# can easily need tens of GB if materialized in one array).
+WAVEFORM_CHUNK_SPIKES = 200_000
+
 # ── KiloSort 4 settings ────────────────────────────────────────────────────────
 KS4_BATCH_SIZE = 60_000
 KS4_NBLOCKS    = 1         # 1 = rigid drift correction; >1 = non-rigid

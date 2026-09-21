@@ -39,12 +39,21 @@ PC features are computed by per-channel PCA on the extracted waveforms
 KS4's pc_features.npy stores residual projections relative to each template's
 mean — those are not suitable for Klusters (PC1 does not correlate with
 spike amplitude in the expected way).
-All feature values are scaled ×100 and written as integers, except the
-timestamp which is written as-is.
+All feature values are rounded to integers, except the timestamp which is
+written as-is.
+
+Memory usage
+------------
+A shank's waveforms are never materialized all at once — for a dense,
+high-channel-count shank that array can reach tens of GB. The PCA basis is
+fit from a small random sample first (see _fit_svd_basis), then waveforms
+are extracted and written to .spk/.fet WAVEFORM_CHUNK_SPIKES spikes at a
+time (see config.py), keeping peak memory bounded regardless of how many
+spikes a shank has.
 """
 
 from pathlib import Path
-from typing import List, Optional
+from typing import IO, List, Optional
 
 import numpy as np
 
@@ -162,31 +171,50 @@ def export_to_neurosuite(
             for c in sh_clus:
                 f.write(f"{c}\n")
 
-        # ── Extract waveforms from raw .dat ───────────────────────────────────
-        waveforms = _extract_waveforms(
-            dat, sh_times, shank_chans, n_total, sbefore, safter
-        )
-        # waveforms: (n_spikes, n_shank_ch, n_samples)
+        # ── Waveforms + features, written in chunks ───────────────────────────
+        # A shank's full (n_spikes, n_shank_ch, n_samples) waveform array can
+        # easily be tens of GB for a dense, high-channel-count shank — too
+        # large to materialize at once. Instead: fit the PCA basis (standard
+        # shanks only) from a small random sample first, then extract, write
+        # .spk, and write .fet one bounded-size chunk of spikes at a time.
+        large_shank = n_shank_ch > cfg.LARGE_SHANK_THRESHOLD
 
-        # ── .spk.N ────────────────────────────────────────────────────────────
-        # Neurosuite format: sample-major interleave, same as .dat
-        # Layout per spike: (n_samples, n_channels) in C order
-        # i.e. [t0_ch0, t0_ch1, ..., t0_chK, t1_ch0, ..., tN_chK]
-        # waveforms is (n_spikes, n_chan, n_samples) → transpose axes 1&2 before writing
-        spk_path = output_dir / f"{merge_name}.spk.{shank_n}"
-        waveforms.transpose(0, 2, 1).astype(np.int16).tofile(spk_path)
-
-        # ── Build features (per-channel PCA on extracted waveforms) ──────────
         # KS4's pc_features.npy stores residual projections (deviation from
         # template mean), not absolute waveform PCA.  Using them directly in
         # Klusters produces features uncorrelated with spike amplitude.
         # We always recompute PCA from the extracted waveforms.
-        pc_fets = _compute_svd_features(waveforms, n_pcs=cfg.SPIKE_N_FEATURES)
-        # pc_fets: (n_spikes, n_pcs, n_shank_ch)
+        pca_basis = None
+        if not large_shank:
+            pca_basis = _fit_svd_basis(
+                dat, sh_times, shank_chans, n_total, sbefore, safter,
+                n_pcs=cfg.SPIKE_N_FEATURES,
+            )
 
-        # ── .fet.N ────────────────────────────────────────────────────────────
+        n_feat_total = 3 if large_shank else n_shank_ch * cfg.SPIKE_N_FEATURES + 3
+
+        spk_path = output_dir / f"{merge_name}.spk.{shank_n}"
         fet_path = output_dir / f"{merge_name}.fet.{shank_n}"
-        _write_fet(fet_path, pc_fets, waveforms, sh_times)
+        chunk_size = cfg.WAVEFORM_CHUNK_SPIKES
+
+        with open(spk_path, "wb") as spk_f, open(fet_path, "w") as fet_f:
+            fet_f.write(f"{n_feat_total}\n")
+            for start in range(0, n_spikes, chunk_size):
+                stop = min(start + chunk_size, n_spikes)
+                chunk_times = sh_times[start:stop]
+
+                # (chunk_n, n_shank_ch, n_samples)
+                waveforms = _extract_waveforms(
+                    dat, chunk_times, shank_chans, n_total, sbefore, safter
+                )
+
+                # ── .spk.N ──────────────────────────────────────────────────
+                # Neurosuite format: sample-major interleave, same as .dat.
+                # Layout per spike: (n_samples, n_channels) in C order, i.e.
+                # [t0_ch0, t0_ch1, ..., t0_chK, t1_ch0, ..., tN_chK]
+                waveforms.transpose(0, 2, 1).astype(np.int16).tofile(spk_f)
+
+                # ── .fet.N (this chunk's rows) ──────────────────────────────
+                _write_fet_chunk(fet_f, waveforms, chunk_times, pca_basis, large_shank)
 
     print(f"  Neurosuite files written to: {output_dir}")
 
@@ -332,43 +360,68 @@ def _extract_ks_pc_features(
     return fets
 
 
-def _compute_svd_features(
-    waveforms: np.ndarray,
-    n_pcs: int = 3,
-    n_basis: int = 50_000,
-) -> np.ndarray:
+def _fit_svd_basis(
+    dat:         np.ndarray,
+    sh_times:    np.ndarray,
+    shank_chans: List[int],
+    n_total:     int,
+    sbefore:     int,
+    safter:      int,
+    n_pcs:       int = 3,
+    n_basis:     int = 50_000,
+) -> Optional[List[tuple]]:
     """
-    Per-channel PCA on extracted waveforms.  Returns (n_spikes, n_pcs, n_shank_channels).
+    Fit a per-channel PCA basis from a random subset of up to n_basis spikes,
+    via a (n_samples × n_samples) covariance matrix SVD (fast regardless of
+    total spike count). Only that small subset's waveforms are extracted —
+    never the full shank — so this stays cheap even for millions of spikes.
 
-    PCA basis vectors are estimated from a random subset of up to n_basis spikes
-    via a 32×32 covariance matrix SVD (fast regardless of n_spikes).  All spikes
-    are then projected onto those basis vectors.
-
-    This produces features whose PC1 correlates with spike amplitude on each
+    Returns a list of (mean_wf, V) per shank channel, or None if there are
+    too few spikes to fit a basis from. Use with _project_svd_features to
+    get PCA features whose PC1 correlates with spike amplitude on each
     channel, as expected by Klusters.
     """
-    n_spikes, n_shank_ch, n_samples = waveforms.shape
-    fets = np.zeros((n_spikes, n_pcs, n_shank_ch), dtype=np.float32)
-
+    n_spikes = len(sh_times)
     if n_spikes < 2:
-        return fets
+        return None
 
     rng = np.random.default_rng(42)
     n_basis = min(n_basis, n_spikes)
     basis_idx = rng.choice(n_spikes, n_basis, replace=False)
+    basis_wf = _extract_waveforms(
+        dat, sh_times[basis_idx], shank_chans, n_total, sbefore, safter
+    )   # (n_basis, n_shank_ch, n_samples)
 
+    n_shank_ch = len(shank_chans)
+    basis = []
     for ch in range(n_shank_ch):
-        ch_wf = waveforms[:, ch, :].astype(np.float64)   # (n_spikes, n_samples)
-
-        # PCA basis from random subset — SVD of (n_samples × n_samples) covariance
-        basis   = ch_wf[basis_idx]
-        mean_wf = basis.mean(axis=0)
-        cb      = basis - mean_wf
+        ch_wf   = basis_wf[:, ch, :].astype(np.float64)   # (n_basis, n_samples)
+        mean_wf = ch_wf.mean(axis=0)
+        cb      = ch_wf - mean_wf
         cov     = (cb.T @ cb) / n_basis          # (n_samples, n_samples)
         _, _, Vt = np.linalg.svd(cov, full_matrices=False)
         V = Vt[:n_pcs].T                         # (n_samples, n_pcs)
+        basis.append((mean_wf, V))
 
-        # Project all spikes
+    return basis
+
+
+def _project_svd_features(
+    waveforms: np.ndarray,
+    basis:     List[tuple],
+) -> np.ndarray:
+    """
+    Project extracted waveforms onto a per-channel PCA basis from _fit_svd_basis.
+    waveforms: (n_spikes, n_shank_ch, n_samples)
+    Returns  : (n_spikes, n_pcs, n_shank_ch)
+    """
+    n_spikes, n_shank_ch, _ = waveforms.shape
+    n_pcs = basis[0][1].shape[1]
+    fets = np.zeros((n_spikes, n_pcs, n_shank_ch), dtype=np.float32)
+
+    for ch in range(n_shank_ch):
+        mean_wf, V = basis[ch]
+        ch_wf = waveforms[:, ch, :].astype(np.float64)   # (n_spikes, n_samples)
         fets[:, :n_pcs, ch] = ((ch_wf - mean_wf) @ V).astype(np.float32)
 
     return fets
@@ -378,17 +431,20 @@ def _compute_svd_features(
 #  .fet file writer
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _write_fet(
-    path:       Path,
-    pc_fets:    np.ndarray,
-    waveforms:  np.ndarray,
-    timestamps: np.ndarray,
+def _write_fet_chunk(
+    fet_f:       "IO",
+    waveforms:   np.ndarray,
+    timestamps:  np.ndarray,
+    pca_basis:   Optional[List[tuple]],
+    large_shank: bool,
 ) -> None:
     """
-    Write a Neurosuite .fet file.
+    Append one chunk's worth of rows to an already-open Neurosuite .fet file.
+    Called once per waveform chunk; the column-count header line is written
+    separately by the caller before the first chunk.
 
     Standard shanks (n_chan <= LARGE_SHANK_THRESHOLD):
-      Layout per spike (×100 scaled integers + unscaled timestamp):
+      Layout per spike (integers + unscaled timestamp):
         PC1_ch0 PC2_ch0 PC3_ch0  PC1_ch1 PC2_ch1 PC3_ch1  ...   channel-major
         wvpower   wvtrough2peak
         timestamp
@@ -398,8 +454,6 @@ def _write_fet(
       Layout per spike:
         wvpower   wvtrough2peak   timestamp
       Total columns = 3.
-
-    First line of file = total number of columns.
     """
     n_spikes, n_shank_ch, _ = waveforms.shape
     wv_flat = waveforms.reshape(n_spikes, -1)   # (n_spikes, n_chan * n_samples)
@@ -410,19 +464,19 @@ def _write_fet(
     # counts^2, orders of magnitude larger than PCA projections and completely
     # distorting the Klusters feature space.  RMS keeps wvpow on the same
     # scale as the PC features (~10–10000 ADC counts).
-    n_feat       = wv_flat.shape[1]                               # n_chan * n_samples
-    wvpow        = np.sqrt(np.sum(wv_flat ** 2, axis=1) / n_feat) # (n_spikes,)
-    wvtrough2peak = wv_flat.max(axis=1) - wv_flat.min(axis=1)     # (n_spikes,)
+    n_feat        = wv_flat.shape[1]                               # n_chan * n_samples
+    wvpow         = np.sqrt(np.sum(wv_flat ** 2, axis=1) / n_feat) # (n_spikes,)
+    wvtrough2peak = wv_flat.max(axis=1) - wv_flat.min(axis=1)      # (n_spikes,)
 
-    if n_shank_ch > cfg.LARGE_SHANK_THRESHOLD:
+    if large_shank:
         # ── Large shank: energy + trough-to-peak only ─────────────────────────
-        feat_int     = np.round(
+        feat_int = np.round(
             np.column_stack([wvpow, wvtrough2peak])
         ).astype(np.int64)
-        n_feat_total = 3   # energy + trough2peak + timestamp
 
     else:
         # ── Standard shank: channel-major PCA + energy + trough-to-peak ───────
+        pc_fets = _project_svd_features(waveforms, pca_basis)
         # pc_fets shape: (n_spikes, n_pcs, n_shank_ch)
         # Channel-major: [PC1_ch0, PC2_ch0, PC3_ch0, PC1_ch1, ...]
         pcs = pc_fets.transpose(0, 2, 1).reshape(n_spikes, -1)
@@ -431,10 +485,7 @@ def _write_fet(
         feat_int = np.round(
             np.column_stack([pcs, wvpow, wvtrough2peak])
         ).astype(np.int64)
-        n_feat_total = feat_int.shape[1] + 1   # +1 for timestamp
 
-    with open(path, "w") as f:
-        f.write(f"{n_feat_total}\n")
-        for i in range(n_spikes):
-            feat_str = "\t".join(str(v) for v in feat_int[i])
-            f.write(f"{feat_str}\t{timestamps[i]}\n")
+    for i in range(n_spikes):
+        feat_str = "\t".join(str(v) for v in feat_int[i])
+        fet_f.write(f"{feat_str}\t{timestamps[i]}\n")
